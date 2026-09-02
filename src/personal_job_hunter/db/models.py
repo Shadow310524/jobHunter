@@ -360,10 +360,13 @@ class ApplicationModel(Base):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
-        String(32), default="NOT_APPLIED", index=True, nullable=False
+        String(32), default="PENDING_HUMAN_REVIEW", index=True, nullable=False
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    interview_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    human_feedback: Mapped[str | None] = mapped_column(String(32), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    events_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False

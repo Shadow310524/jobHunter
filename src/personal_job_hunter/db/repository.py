@@ -7,6 +7,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, joinedload
 
 from personal_job_hunter.db.models import (
+    ApplicationModel,
     CandidateProfileModel,
     CanonicalJobModel,
     JobEmbeddingModel,
@@ -447,3 +448,147 @@ class EnrichmentRepository:
         """Fetch all enrichments for a canonical job."""
         stmt = select(JobEnrichmentModel).where(JobEnrichmentModel.canonical_id == canonical_id)
         return list(session.scalars(stmt).all())
+
+
+class ApplicationRepository:
+    """Data access operations for HITL application tracking and lifecycle state transitions."""
+
+    @staticmethod
+    def get_application(session: Session, canonical_id: str) -> ApplicationModel | None:
+        """Fetch application record by canonical job ID."""
+        stmt = select(ApplicationModel).where(ApplicationModel.canonical_id == canonical_id)
+        return session.scalars(stmt).first()
+
+    @staticmethod
+    def create_or_get_application(
+        session: Session,
+        canonical_id: str,
+        initial_status: str = "PENDING_HUMAN_REVIEW",
+    ) -> ApplicationModel:
+        """Idempotently create or fetch an application tracking record."""
+        existing = ApplicationRepository.get_application(session, canonical_id)
+        if existing:
+            return existing
+
+        app = ApplicationModel(
+            canonical_id=canonical_id,
+            status=initial_status,
+            events_log=[
+                {
+                    "timestamp": _utc_now().isoformat(),
+                    "from_status": "NONE",
+                    "to_status": initial_status,
+                    "action": "INITIALIZED",
+                    "notes": "Application tracking initialized by pipeline.",
+                }
+            ],
+            created_at=_utc_now(),
+            updated_at=_utc_now(),
+        )
+        session.add(app)
+        session.flush()
+        return app
+
+    @staticmethod
+    def update_status(
+        session: Session,
+        canonical_id: str,
+        new_status: str,
+        action: str,
+        notes: str | None = None,
+        applied_at: datetime | None = None,
+        interview_date: datetime | None = None,
+        human_feedback: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ApplicationModel:
+        """Update lifecycle status with immutable event logging."""
+        app = ApplicationRepository.create_or_get_application(session, canonical_id)
+        old_status = app.status
+
+        app.status = new_status
+        if applied_at is not None:
+            app.applied_at = applied_at
+        if interview_date is not None:
+            app.interview_date = interview_date
+        if human_feedback is not None:
+            app.human_feedback = human_feedback
+        if notes:
+            app.notes = (app.notes + "\n" + notes) if app.notes else notes
+
+        event = {
+            "timestamp": _utc_now().isoformat(),
+            "from_status": old_status,
+            "to_status": new_status,
+            "action": action,
+            "notes": notes or "",
+            "metadata": metadata or {},
+        }
+        current_log = list(app.events_log)
+        current_log.append(event)
+        app.events_log = current_log
+        app.updated_at = _utc_now()
+        session.flush()
+        return app
+
+    @staticmethod
+    def get_applications_by_status(
+        session: Session, status: str, limit: int = 50
+    ) -> list[tuple[ApplicationModel, CanonicalJobModel, JobMatchScoreModel | None]]:
+        """Query applications filtered by lifecycle status."""
+        stmt = (
+            select(ApplicationModel, CanonicalJobModel, JobMatchScoreModel)
+            .join(
+                CanonicalJobModel, ApplicationModel.canonical_id == CanonicalJobModel.canonical_id
+            )
+            .outerjoin(
+                JobMatchScoreModel,
+                CanonicalJobModel.canonical_id == JobMatchScoreModel.canonical_id,
+            )
+            .where(ApplicationModel.status == status)
+            .order_by(desc(ApplicationModel.updated_at))
+            .limit(limit)
+        )
+        results = session.execute(stmt).all()
+        return [(row[0], row[1], row[2]) for row in results]
+
+    @staticmethod
+    def get_review_inbox(
+        session: Session, limit: int = 50
+    ) -> list[
+        tuple[
+            ApplicationModel,
+            CanonicalJobModel,
+            JobMatchScoreModel | None,
+            JobEnrichmentModel | None,
+        ]
+    ]:
+        """Query applications awaiting human review ordered by match score."""
+        stmt = (
+            select(ApplicationModel, CanonicalJobModel, JobMatchScoreModel, JobEnrichmentModel)
+            .join(
+                CanonicalJobModel, ApplicationModel.canonical_id == CanonicalJobModel.canonical_id
+            )
+            .outerjoin(
+                JobMatchScoreModel,
+                CanonicalJobModel.canonical_id == JobMatchScoreModel.canonical_id,
+            )
+            .outerjoin(
+                JobEnrichmentModel,
+                CanonicalJobModel.canonical_id == JobEnrichmentModel.canonical_id,
+            )
+            .where(ApplicationModel.status == "PENDING_HUMAN_REVIEW")
+            .order_by(desc(JobMatchScoreModel.overall_score))
+            .limit(limit)
+        )
+        results = session.execute(stmt).all()
+        return [(row[0], row[1], row[2], row[3]) for row in results]
+
+    @staticmethod
+    def get_application_stats(session: Session) -> dict[str, int]:
+        """Aggregate application count grouped by lifecycle status."""
+        stmt = select(ApplicationModel.status)
+        all_statuses = session.scalars(stmt).all()
+        stats: dict[str, int] = {}
+        for s in all_statuses:
+            stats[s] = stats.get(s, 0) + 1
+        return stats

@@ -30,6 +30,20 @@ class JobSource(StrEnum):
     LEVER = "lever"
 
 
+class ApplicationStatus(StrEnum):
+    """HITL Application Tracking Lifecycle States."""
+
+    DISCOVERED = "DISCOVERED"
+    PENDING_HUMAN_REVIEW = "PENDING_HUMAN_REVIEW"
+    READY_TO_APPLY = "READY_TO_APPLY"
+    REJECTED_BY_HUMAN = "REJECTED_BY_HUMAN"
+    APPLIED = "APPLIED"
+    INTERVIEWING = "INTERVIEWING"
+    OFFER = "OFFER"
+    REJECTED_BY_COMPANY = "REJECTED_BY_COMPANY"
+    ARCHIVED = "ARCHIVED"
+
+
 class UnifiedJobPost(BaseModel):
     """Unified internal representation of a job posting across all collectors."""
 
