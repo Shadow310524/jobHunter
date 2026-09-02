@@ -6,11 +6,16 @@ from personal_job_hunter.db.models import (
     CandidateProfileModel,
     CanonicalJobModel,
     JobEmbeddingModel,
+    JobEnrichmentModel,
     JobMatchScoreModel,
     ProfileEmbeddingModel,
     SourceProvenanceModel,
 )
-from personal_job_hunter.db.repository import JobRepository, ProfileRepository
+from personal_job_hunter.db.repository import (
+    EnrichmentRepository,
+    JobRepository,
+    ProfileRepository,
+)
 from personal_job_hunter.db.session import create_tables, get_db_engine, get_session
 
 __all__ = [
@@ -18,7 +23,9 @@ __all__ = [
     "Base",
     "CandidateProfileModel",
     "CanonicalJobModel",
+    "EnrichmentRepository",
     "JobEmbeddingModel",
+    "JobEnrichmentModel",
     "JobMatchScoreModel",
     "JobRepository",
     "ProfileEmbeddingModel",

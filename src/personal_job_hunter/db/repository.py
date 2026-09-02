@@ -1,6 +1,7 @@
 """Repository layer for database operations, queries, and idempotent upserts."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, joinedload
@@ -9,6 +10,7 @@ from personal_job_hunter.db.models import (
     CandidateProfileModel,
     CanonicalJobModel,
     JobEmbeddingModel,
+    JobEnrichmentModel,
     JobMatchScoreModel,
     ProfileEmbeddingModel,
     SourceProvenanceModel,
@@ -375,3 +377,73 @@ class JobRepository:
         """Return total canonical job count in database."""
         stmt = select(CanonicalJobModel.canonical_id)
         return len(session.scalars(stmt).all())
+
+
+class EnrichmentRepository:
+    """Data access operations for structured LLM job enrichments."""
+
+    @staticmethod
+    def get_enrichment(
+        session: Session,
+        canonical_id: str,
+        model_name: str,
+        prompt_version: str,
+        profile_id: str = "default",
+    ) -> JobEnrichmentModel | None:
+        """Fetch cached LLM enrichment by canonical ID, model name, and prompt version."""
+        stmt = select(JobEnrichmentModel).where(
+            JobEnrichmentModel.canonical_id == canonical_id,
+            JobEnrichmentModel.profile_id == profile_id,
+            JobEnrichmentModel.model_name == model_name,
+            JobEnrichmentModel.prompt_version == prompt_version,
+        )
+        return session.scalars(stmt).first()
+
+    @staticmethod
+    def upsert_enrichment(
+        session: Session,
+        canonical_id: str,
+        model_name: str,
+        model_version: str,
+        prompt_version: str,
+        content_hash: str,
+        enrichment_data: dict[str, Any],
+        profile_id: str = "default",
+    ) -> JobEnrichmentModel:
+        """Idempotently insert or update LLM enrichment result."""
+        existing = EnrichmentRepository.get_enrichment(
+            session=session,
+            canonical_id=canonical_id,
+            model_name=model_name,
+            prompt_version=prompt_version,
+            profile_id=profile_id,
+        )
+        if existing:
+            if existing.content_hash != content_hash:
+                existing.content_hash = content_hash
+                existing.model_version = model_version
+                existing.enrichment_data = enrichment_data
+                existing.updated_at = _utc_now()
+            return existing
+
+        new_enrichment = JobEnrichmentModel(
+            canonical_id=canonical_id,
+            profile_id=profile_id,
+            model_name=model_name,
+            model_version=model_version,
+            prompt_version=prompt_version,
+            content_hash=content_hash,
+            enrichment_data=enrichment_data,
+            created_at=_utc_now(),
+            updated_at=_utc_now(),
+        )
+        session.add(new_enrichment)
+        return new_enrichment
+
+    @staticmethod
+    def get_all_enrichments_for_job(
+        session: Session, canonical_id: str
+    ) -> list[JobEnrichmentModel]:
+        """Fetch all enrichments for a canonical job."""
+        stmt = select(JobEnrichmentModel).where(JobEnrichmentModel.canonical_id == canonical_id)
+        return list(session.scalars(stmt).all())

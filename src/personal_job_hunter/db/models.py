@@ -62,6 +62,9 @@ class CandidateProfileModel(Base):
     embeddings: Mapped[list["ProfileEmbeddingModel"]] = relationship(
         "ProfileEmbeddingModel", back_populates="profile", cascade="all, delete-orphan"
     )
+    enrichments: Mapped[list["JobEnrichmentModel"]] = relationship(
+        "JobEnrichmentModel", back_populates="profile", cascade="all, delete-orphan"
+    )
 
 
 class CanonicalJobModel(Base):
@@ -111,6 +114,9 @@ class CanonicalJobModel(Base):
     )
     embeddings: Mapped[list["JobEmbeddingModel"]] = relationship(
         "JobEmbeddingModel", back_populates="canonical_job", cascade="all, delete-orphan"
+    )
+    enrichments: Mapped[list["JobEnrichmentModel"]] = relationship(
+        "JobEnrichmentModel", back_populates="canonical_job", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
@@ -280,6 +286,63 @@ class ProfileEmbeddingModel(Base):
             "model_name",
             "model_version",
             name="uq_profile_embeddings_model_version",
+        ),
+    )
+
+
+class JobEnrichmentModel(Base):
+    """Persisted LLM enrichment results with prompt & model versioning and content hash."""
+
+    __tablename__ = "job_enrichments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canonical_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("canonical_jobs.canonical_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    profile_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("candidate_profiles.id", ondelete="CASCADE"),
+        default="default",
+        nullable=False,
+        index=True,
+    )
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    enrichment_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    canonical_job: Mapped[CanonicalJobModel] = relationship(
+        "CanonicalJobModel", back_populates="enrichments"
+    )
+    profile: Mapped[CandidateProfileModel] = relationship(
+        "CandidateProfileModel", back_populates="enrichments"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "canonical_id",
+            "profile_id",
+            "model_name",
+            "prompt_version",
+            name="uq_job_enrichments_lookup",
+        ),
+        Index(
+            "ix_job_enrichments_lookup",
+            "canonical_id",
+            "profile_id",
+            "model_name",
+            "prompt_version",
         ),
     )
 
