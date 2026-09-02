@@ -42,3 +42,18 @@ def test_settings_env_var_override() -> None:
         assert config.app_env == "staging"
         assert config.debug is True
         assert config.log_level == "WARNING"
+
+
+def test_database_settings_url() -> None:
+    """Verify PostgreSQL database URL construction."""
+    config = Settings(
+        postgres_host="db.internal",
+        postgres_port=5433,
+        postgres_user="admin",
+        postgres_password="secretpassword",
+        postgres_db="jobhunter_prod",
+    )
+    assert (
+        config.sqlalchemy_database_url
+        == "postgresql+psycopg://admin:secretpassword@db.internal:5433/jobhunter_prod"
+    )
