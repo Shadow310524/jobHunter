@@ -184,3 +184,156 @@ class DeduplicationResult(BaseModel):
         default_factory=dict,
         description="Map of candidate group key to list of canonical_ids",
     )
+
+
+class MatchRecommendation(StrEnum):
+    """Classification recommendation for an application."""
+
+    APPLY = "APPLY"  # 🟢 High fit, eligible
+    STRETCH = "STRETCH"  # 🟡 Good technical fit, requires 1-2 yrs experience or slight stretch
+    SKIP = "SKIP"  # 🔴 Mismatched skills, disqualified location/role, or 5+ yrs requirement
+
+
+class CandidateProfile(BaseModel):
+    """Candidate profile model representing real background and goals."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    name: str = "Harish Renganathan"
+    degree: str = "B.Tech in Artificial Intelligence & Machine Learning"
+    graduation_year: int = 2026
+    cgpa: float = 8.2
+    current_role: str = "AI Platform Engineer Intern"
+    company_internship: str = "AVASOFT"
+    internship_duration: str = "Dec 2025 – Apr 2026"
+
+    # Skills categorized by proficiency/priority
+    core_skills: list[str] = Field(
+        default_factory=lambda: [
+            "Python",
+            "FastAPI",
+            "REST APIs",
+            "PostgreSQL",
+            "pgvector",
+            "RAG",
+            "Embeddings",
+            "LangChain",
+            "LangGraph",
+            "FastMCP",
+            "MCP",
+            "AI Agents",
+            "Multi-Agent Workflows",
+            "HITL",
+            "AWS Bedrock",
+            "AWS S3",
+            "Docker",
+            "Git",
+        ]
+    )
+    secondary_skills: list[str] = Field(
+        default_factory=lambda: [
+            "Kubernetes",
+            "Java",
+            "Spring Boot",
+            "MySQL",
+            "Redis",
+            "Linux",
+            "SQL",
+        ]
+    )
+
+    # Preferred target roles
+    target_roles: list[str] = Field(
+        default_factory=lambda: [
+            "AI Engineer",
+            "GenAI Engineer",
+            "Generative AI Engineer",
+            "AI/ML Engineer",
+            "LLM Engineer",
+            "Agentic AI Engineer",
+            "AI Platform Engineer",
+            "Applied AI Engineer",
+            "AI Backend Engineer",
+            "Python AI Engineer",
+            "Python Backend Developer",
+            "Backend Engineer",
+            "Software Engineer",
+            "Python Developer",
+            "AI Software Engineer",
+            "ML Platform Engineer",
+            "Machine Learning Platform Engineer",
+        ]
+    )
+
+    # Preferred locations in priority order
+    primary_locations: list[str] = Field(
+        default_factory=lambda: [
+            "Bangalore",
+            "Bengaluru",
+            "Remote - India",
+            "Remote, India",
+            "India - Remote",
+        ]
+    )
+    secondary_locations: list[str] = Field(
+        default_factory=lambda: [
+            "Hyderabad",
+            "Pune",
+            "Mumbai",
+            "Delhi",
+            "Gurgaon",
+            "Noida",
+            "Chennai",
+            "Home based - APAC",
+            "Remote, Global",
+            "Worldwide",
+        ]
+    )
+
+    experience_years_max: float = 2.0
+
+
+class MatchWeights(BaseModel):
+    """Configurable scoring weights for deterministic matching."""
+
+    technical_weight: float = 0.35
+    role_weight: float = 0.30
+    experience_weight: float = 0.20
+    location_weight: float = 0.15
+
+    apply_threshold: float = 75.0
+    stretch_threshold: float = 50.0
+
+
+class MatchBreakdown(BaseModel):
+    """Component scores and explanation for a match."""
+
+    technical_score: float = 0.0
+    role_score: float = 0.0
+    experience_score: float = 0.0
+    location_score: float = 0.0
+    overall_score: float = 0.0
+
+    matched_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    matched_role_keywords: list[str] = Field(default_factory=list)
+
+    experience_eligible: bool = True
+    location_eligible: bool = True
+
+    score_reasons: list[str] = Field(default_factory=list)
+
+
+class JobMatchResult(BaseModel):
+    """Complete evaluation of a CanonicalJobPost against a CandidateProfile."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    canonical_id: str
+    job_title: str
+    company: str
+    location: str
+    recommendation: MatchRecommendation
+    overall_score: float
+    breakdown: MatchBreakdown
+    application_urls: list[str] = Field(default_factory=list)
