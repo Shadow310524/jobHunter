@@ -224,10 +224,14 @@ class CandidateProfile(BaseModel):
             "AI Agents",
             "Multi-Agent Workflows",
             "HITL",
+            "AWS",
             "AWS Bedrock",
             "AWS S3",
             "Docker",
             "Git",
+            "GenAI",
+            "LLM",
+            "Machine Learning",
         ]
     )
     secondary_skills: list[str] = Field(
@@ -239,6 +243,8 @@ class CandidateProfile(BaseModel):
             "Redis",
             "Linux",
             "SQL",
+            "PyTorch",
+            "Deep Learning",
         ]
     )
 
@@ -296,13 +302,13 @@ class CandidateProfile(BaseModel):
 class MatchWeights(BaseModel):
     """Configurable scoring weights for deterministic matching."""
 
-    technical_weight: float = 0.35
-    role_weight: float = 0.30
+    role_weight: float = 0.35
+    technical_weight: float = 0.30
     experience_weight: float = 0.20
     location_weight: float = 0.15
 
-    apply_threshold: float = 75.0
-    stretch_threshold: float = 50.0
+    apply_threshold: float = 80.0
+    stretch_threshold: float = 55.0
 
 
 class MatchBreakdown(BaseModel):

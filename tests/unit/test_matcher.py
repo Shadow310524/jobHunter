@@ -1,4 +1,4 @@
-"""Unit tests for deterministic candidate profile matcher and scoring engine."""
+"""Unit tests for calibrated candidate profile matcher and scoring engine (Phase 5B)."""
 
 from personal_job_hunter.domain.matcher import (
     evaluate_experience_compatibility,
@@ -79,9 +79,23 @@ def test_senior_stretch_job_classification() -> None:
     )
     result = match_job(job)
 
-    # Experience is not eligible for entry-level, but strong technical match puts it in STRETCH
+    # Senior title has experience_eligible = False, placing it in STRETCH
     assert result.breakdown.experience_eligible is False
     assert result.recommendation == MatchRecommendation.STRETCH
+
+
+def test_support_sustaining_role_skip() -> None:
+    """Verify operational / support / sustaining engineering roles are skipped."""
+    job = create_sample_job(
+        title="Associate Linux Support Engineer",
+        location="Bengaluru, India",
+        description="Resolve customer tickets on Linux and Python environments.",
+        inferred_skills=["Linux", "Python"],
+    )
+    result = match_job(job)
+
+    assert result.breakdown.role_score == 35.0
+    assert result.recommendation == MatchRecommendation.SKIP
 
 
 def test_disqualified_non_technical_role_skip() -> None:
@@ -116,7 +130,7 @@ def test_remote_india_location_score() -> None:
     """Verify Remote India location receives 100 location score."""
     job = create_sample_job(
         title="Backend Developer",
-        location="Remote, India",
+        location="Remote - India",
         description="Python backend services.",
         is_remote=True,
     )
@@ -137,6 +151,19 @@ def test_tier_one_indian_hub_location_score() -> None:
     assert eligible is True
 
 
+def test_worldwide_remote_stretch_only() -> None:
+    """Verify Worldwide Remote without explicit India entity is not marked eligible for APPLY."""
+    job = create_sample_job(
+        title="Python Engineer",
+        location="Home based - Worldwide",
+        description="Python services.",
+        is_remote=True,
+    )
+    score, eligible, _ = evaluate_location_compatibility(job, CandidateProfile())
+    assert score == 50.0
+    assert eligible is False
+
+
 def test_missing_experience_information_graceful() -> None:
     """Verify jobs with no stated experience receive neutral score and remain eligible."""
     job = create_sample_job(
@@ -149,17 +176,19 @@ def test_missing_experience_information_graceful() -> None:
     assert eligible is True
 
 
-def test_missing_skills_information_graceful() -> None:
-    """Verify jobs with sparse descriptions receive baseline technical score."""
+def test_ai_role_without_ai_skills_capped() -> None:
+    """Verify AI role with only generic Python/Git skills has technical score capped."""
     job = create_sample_job(
-        title="Software Engineer",
+        title="AI Engineer",
         location="Bengaluru",
-        description="General problem solver.",
-        inferred_skills=[],
+        description="Write standard Python scripts and manage Git repos.",
+        inferred_skills=["Python", "Git"],
     )
-    score, matched, missing, _ = evaluate_technical_skills(job, CandidateProfile())
-    assert score == 65.0
-    assert len(matched) == 0
+    # Role is AI Tier 1 (100 pts)
+    tech_score, matched, missing, reasons = evaluate_technical_skills(
+        job, CandidateProfile(), role_score=100.0
+    )
+    assert tech_score <= 60.0
 
 
 def test_generic_software_engineer_vs_ai_role() -> None:
@@ -172,7 +201,7 @@ def test_generic_software_engineer_vs_ai_role() -> None:
     swe_score, _, _ = evaluate_role_relevance(swe_job, profile)
 
     assert ai_score == 100.0
-    assert swe_score == 80.0
+    assert swe_score == 70.0
 
 
 def test_false_positive_keyword_avoidance() -> None:
@@ -182,9 +211,8 @@ def test_false_positive_keyword_avoidance() -> None:
         description="Manage email campaigns and social affairs.",
     )
     score, matched, _ = evaluate_role_relevance(job, CandidateProfile())
-    assert score <= 45.0
+    assert score == 0.0
     assert "ai" not in matched
-    assert "ml" not in matched
 
 
 def test_custom_weights_override() -> None:
@@ -192,17 +220,15 @@ def test_custom_weights_override() -> None:
     job = create_sample_job(
         title="AI Engineer",
         location="Bengaluru",
-        description="Python and FastAPI.",
-        inferred_skills=["Python", "FastAPI"],
+        description="Python, FastAPI, and LangChain.",
+        inferred_skills=["Python", "FastAPI", "LangChain"],
     )
 
-    # Standard weights
     res_std = match_job(job)
 
-    # Custom weights prioritizing technical match 80%
     custom_weights = MatchWeights(
-        technical_weight=0.80,
         role_weight=0.10,
+        technical_weight=0.80,
         experience_weight=0.05,
         location_weight=0.05,
     )

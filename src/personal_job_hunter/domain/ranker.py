@@ -47,31 +47,35 @@ def main() -> None:
     stretch_jobs = [r for r in results if r.recommendation == MatchRecommendation.STRETCH]
     skip_jobs = [r for r in results if r.recommendation == MatchRecommendation.SKIP]
 
-    print("\n" + "=" * 70)
-    print("       PERSONAL AI JOB HUNTER — DETERMINISTIC MATCHING REPORT")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print("       PERSONAL AI JOB HUNTER — CALIBRATED MATCHING REPORT (Phase 5B)")
+    print("=" * 75)
     print(f"Total Canonical Jobs Evaluated:  {len(results)}")
-    print(f"[APPLY] Recommendations:         {len(apply_jobs)}")
-    print(f"[STRETCH] Recommendations:       {len(stretch_jobs)}")
-    print(f"[SKIP] Recommendations:          {len(skip_jobs)}")
-    print("-" * 70)
+    print(f"[APPLY] High-Priority Targets:   {len(apply_jobs)}")
+    print(f"[STRETCH] Moderate Opportunities:{len(stretch_jobs)}")
+    print(f"[SKIP] Low-Fit / Ineligible:     {len(skip_jobs)}")
+    print("-" * 75)
 
-    print("\nTop 10 High-Fit Job Postings (APPLY):")
-    print("-" * 70)
-    for i, job in enumerate(apply_jobs[:10], start=1):
-        print(f"{i}. [{job.overall_score}/100] {job.job_title} @ {job.company}")
-        print(f"   Location:  {job.location}")
+    print(f"\nTop {min(20, len(results))} Ranked Job Postings:")
+    print("-" * 75)
+    for i, job in enumerate(results[:20], start=1):
+        tag = f"[{job.recommendation}]"
+        print(f"{i:2d}. {tag:<9} [{job.overall_score:5.1f}/100] {job.job_title} @ {job.company}")
+        print(f"    Location:   {job.location}")
         print(
-            f"   Scores:    Tech={job.breakdown.technical_score} | "
-            f"Role={job.breakdown.role_score} | "
-            f"Exp={job.breakdown.experience_score} | "
-            f"Loc={job.breakdown.location_score}"
+            f"    Component:  Role={job.breakdown.role_score:4.1f} | "
+            f"Tech={job.breakdown.technical_score:4.1f} | "
+            f"Exp={job.breakdown.experience_score:4.1f} | "
+            f"Loc={job.breakdown.location_score:4.1f}"
         )
-        print(f"   Matched:   {', '.join(job.breakdown.matched_skills[:6])}")
-        print(f"   Apply URL: {job.application_urls[0] if job.application_urls else 'N/A'}")
+        if job.breakdown.matched_skills:
+            print(f"    Matched:    {', '.join(job.breakdown.matched_skills[:6])}")
+        if job.breakdown.missing_skills:
+            print(f"    Missing:    {', '.join(job.breakdown.missing_skills[:4])}")
+        print(f"    Apply URL:  {job.application_urls[0] if job.application_urls else 'N/A'}")
         print()
 
-    print("=" * 70 + "\n")
+    print("=" * 75 + "\n")
 
 
 if __name__ == "__main__":
