@@ -1,7 +1,7 @@
-"""Greenhouse public job board collector.
+"""Ashby public job board collector.
 
-Collects real job postings from legitimate public Greenhouse ATS endpoints
-(e.g., https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true).
+Collects real job postings from legitimate public Ashby ATS endpoints
+(e.g., https://api.ashbyhq.com/posting-api/job-board/{company}).
 No scraping, no authentication bypass, no anti-bot evasion.
 """
 
@@ -9,38 +9,38 @@ import asyncio
 import json
 import logging
 import re
-from html import unescape
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("greenhouse_collector")
+logger = logging.getLogger("ashby_collector")
 
-# Default curated list of tech companies with active public Greenhouse boards
-DEFAULT_COMPANIES = [
-    "postman",
-    "inmobi",
-    "groww",
-    "cloudflare",
-    "databricks",
-    "elastic",
-    "canonical",
-    "airtable",
-    "couchbase",
-    "cloudera",
-    "snyk",
-    "dbtlabs",
-    "confluent",
-    "mongodb",
+# Curated list of top AI & technology employers using Ashby
+DEFAULT_ASHBY_COMPANIES = [
+    "openai",
+    "cerebras",
+    "perplexity",
+    "cursor",
+    "replit",
+    "supabase",
+    "sentry",
+    "linear",
+    "ramp",
+    "midjourney",
+    "quora",
+    "posthog",
+    "modal",
+    "langfuse",
+    "e2b",
+    "dust",
+    "instawork",
+    "retool",
+    "sourcegraph",
 ]
 
-# Targeted roles and keywords for software & AI engineering
+# Targeted engineering roles
 TARGET_ROLE_KEYWORDS = [
     "engineer",
     "developer",
@@ -57,9 +57,12 @@ TARGET_ROLE_KEYWORDS = [
     "platform",
     "data engineer",
     "applied ai",
+    "architect",
+    "full stack",
+    "frontend",
 ]
 
-# Explicit exclusions (non-technical, sales, marketing, HR, etc.)
+# Exclusions (non-technical, sales, marketing, HR, etc.)
 EXCLUDED_KEYWORDS = [
     "sales",
     "marketing",
@@ -77,6 +80,8 @@ EXCLUDED_KEYWORDS = [
     "counsel",
     "business development",
     "payroll",
+    "operations lead",
+    "communications",
 ]
 
 # Target locations
@@ -85,9 +90,19 @@ TARGET_LOCATIONS = [
     "bengaluru",
     "india",
     "remote - india",
-    "remote",
-    "home based - apac",
+    "remote, india",
+    "india - remote",
+    "mumbai",
+    "delhi",
+    "hyderabad",
+    "pune",
+    "gurgaon",
+    "noida",
+    "chennai",
     "apac",
+    "home based - apac",
+    "remote, global",
+    "worldwide",
     "anywhere",
 ]
 
@@ -141,20 +156,6 @@ COMMON_TECH_SKILLS = [
 ]
 
 
-def clean_html_text(raw_html: str) -> str:
-    """Convert HTML content into plain text safely (handles double/escaped HTML)."""
-    if not raw_html:
-        return ""
-    # 1. Unescape HTML entities first so &lt;div&gt; becomes <div>
-    text = unescape(raw_html)
-    # 2. Strip HTML tags
-    text = re.sub(r"<[^>]+>", " ", text)
-    # 3. Final entity unescape and whitespace normalization
-    text = unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
 def extract_skills(text: str) -> list[str]:
     """Extract recognized tech skills deterministically using word boundaries."""
     if not text:
@@ -163,7 +164,6 @@ def extract_skills(text: str) -> list[str]:
     found_skills: set[str] = set()
 
     for skill in COMMON_TECH_SKILLS:
-        # Match whole words/phrases
         pattern = rf"\b{re.escape(skill)}\b"
         if re.search(pattern, lower_text):
             found_skills.add(skill.upper() if len(skill) <= 4 else skill.title())
@@ -171,25 +171,14 @@ def extract_skills(text: str) -> list[str]:
     return sorted(found_skills)
 
 
-def detect_work_mode(location_name: str, title: str, description: str) -> str:
-    """Detect if the role is Remote, Hybrid, or On-site."""
-    combined = f"{location_name} {title} {description[:500]}".lower()
-    if "remote" in combined or "home based" in combined or "work from home" in combined:
-        return "Remote"
-    if "hybrid" in combined:
-        return "Hybrid"
-    if "on-site" in combined or "onsite" in combined or "office based" in combined:
-        return "On-site"
-    return "On-site" if location_name else "Unknown"
-
-
 def is_target_role(title: str) -> bool:
-    """Check if the title matches target engineering profiles and excludes non-technical roles."""
+    """Check if title matches engineering keywords and excludes non-technical roles."""
     lower_title = f" {title.lower()} "
 
     # 1. Exclude non-technical roles
     for ex in EXCLUDED_KEYWORDS:
         if re.search(rf"\b{re.escape(ex)}\b", lower_title):
+            # Allow "partner engineer" or "deployment engineer" even if "partner" is in exclusions
             if "engineer" in lower_title or "developer" in lower_title:
                 continue
             return False
@@ -202,62 +191,103 @@ def is_target_role(title: str) -> bool:
     return False
 
 
-def is_target_location(location_name: str) -> bool:
-    """Check if location matches Bangalore/India/Remote priorities.
+def is_target_location(location_str: str, is_remote: bool | None = None) -> bool:
+    """Check if location matches Bangalore/India or broad Global/APAC Remote.
 
-    Prioritizes:
-    - Bangalore / Bengaluru
-    - India / Remote - India / Indian tech hubs
-    - Global / APAC Remote (where India candidates are eligible)
-    Excludes non-India local remotes (e.g. Remote Italy, Remote US).
+    Explicitly excludes foreign country-specific remotes (e.g. US Remote, UK Remote, EMEA).
     """
-    if not location_name:
-        return True
+    if not location_str:
+        return bool(is_remote)
 
-    lower_loc = location_name.lower()
+    lower = location_str.lower()
 
-    # 1. Direct positive match for India / Bangalore / Bengaluru / Indian cities
-    indian_locations = [
+    # 1. Direct positive match for India / Bangalore / Bengaluru / Indian tech hubs
+    indian_cities = [
         "bangalore",
         "bengaluru",
         "india",
         "remote - india",
         "remote, india",
+        "india - remote",
+        "mumbai",
+        "delhi",
         "hyderabad",
         "pune",
         "gurgaon",
         "noida",
-        "mumbai",
         "chennai",
-        "delhi",
     ]
-    if any(loc in lower_loc for loc in indian_locations):
+    if any(city in lower for city in indian_cities):
         return True
 
-    # 2. General / APAC remote (eligible for Indian candidates)
-    general_remote = [
+    # 2. Exclude foreign country-specific locations
+    foreign_regions = [
+        "us -",
+        "remote (us)",
+        "us only",
+        "usa",
+        "united states",
+        "canada",
+        "toronto",
+        "uk",
+        "london",
+        "emea",
+        "europe",
+        "poland",
+        "germany",
+        "france",
+        "san francisco",
+        "new york",
+        "seattle",
+        "sunnyvale",
+        "california",
+    ]
+    if any(f in lower for f in foreign_regions):
+        return False
+
+    # 3. Match global / APAC remote
+    global_remotes = [
+        "global",
+        "worldwide",
+        "anywhere",
+        "apac",
         "home based - apac",
         "remote - apac",
-        "apac",
-        "anywhere",
-        "worldwide",
-        "remote - global",
     ]
-    if any(loc in lower_loc for loc in general_remote):
+    if any(g in lower for g in global_remotes):
+        return True
+
+    if is_remote and lower.strip() in ["remote", "remote - global", "remote, global"]:
         return True
 
     return False
 
 
+def infer_experience_level(title: str, description: str) -> str:
+    """Infer experience level from title and description without falsifying company data."""
+    combined = f"{title} {description[:400]}".lower()
+    if any(
+        k in combined
+        for k in ["senior", "sr.", "lead", "staff", "principal", "director", "manager"]
+    ):
+        return "Senior / 3+ years (Stretch)"
+    if any(
+        k in combined
+        for k in ["intern", "graduate", "fresher", "junior", "entry level", "associate"]
+    ):
+        return "Fresher / 0-2 years (Target)"
+    return "0-3 years"
+
+
 async def fetch_company_jobs(client: httpx.AsyncClient, company: str) -> list[dict[str, Any]]:
-    """Fetch raw job postings for a company from Greenhouse Public API."""
-    url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true"
+    """Fetch raw job postings for a company from Ashby Public API."""
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
     logger.info("Fetching jobs for company: %s", company)
 
     try:
         response = await client.get(url, timeout=12.0)
         if response.status_code == 404:
-            logger.warning("Greenhouse board not found for '%s' (404)", company)
+            logger.warning("Ashby board not found for '%s' (404)", company)
             return []
         response.raise_for_status()
         data = response.json()
@@ -276,77 +306,76 @@ async def fetch_company_jobs(client: httpx.AsyncClient, company: str) -> list[di
 
 
 def parse_and_normalize_job(raw_job: dict[str, Any], company: str) -> dict[str, Any] | None:
-    """Normalize raw Greenhouse job object into standard dictionary schema."""
+    """Normalize raw Ashby job object into standard dictionary schema."""
     title = str(raw_job.get("title") or "").strip()
     if not title or not is_target_role(title):
         return None
 
-    loc_obj = raw_job.get("location") or {}
-    location_name = str(loc_obj.get("name") or "").strip()
-    if not is_target_location(location_name):
-        return None
-
-    raw_content = str(raw_job.get("content") or "")
-    plain_description = clean_html_text(raw_content)
-
-    departments_raw = raw_job.get("departments") or []
-    department_names = [
-        str(dept.get("name"))
-        for dept in departments_raw
-        if isinstance(dept, dict) and dept.get("name")
+    primary_location = str(raw_job.get("location") or "").strip()
+    secondary_locations_raw = raw_job.get("secondaryLocations") or []
+    secondary_locations = [
+        str(loc.get("location")) if isinstance(loc, dict) else str(loc)
+        for loc in secondary_locations_raw
     ]
 
-    job_url = str(raw_job.get("absolute_url") or "").strip()
-    posted_date = raw_job.get("updated_at")
+    all_locations_str = " ".join([primary_location] + secondary_locations).strip()
+    is_remote = bool(raw_job.get("isRemote"))
 
-    work_mode = detect_work_mode(location_name, title, plain_description)
-    extracted_skills = extract_skills(f"{title} {plain_description}")
+    if not is_target_location(all_locations_str, is_remote=is_remote):
+        return None
 
-    # Experience heuristic detection from description
-    experience_hint = "0-3 years"
-    if any(k in title.lower() for k in ["senior", "sr.", "lead", "staff", "principal", "manager"]):
-        experience_hint = "Senior / 3+ years (Stretch)"
-    elif any(
-        k in title.lower() or k in plain_description.lower()
-        for k in ["intern", "graduate", "fresher", "junior", "entry"]
-    ):
-        experience_hint = "Fresher / 0-2 years (Target)"
+    # Ashby provides clean plaintext description natively
+    plain_description = str(raw_job.get("descriptionPlain") or "").strip()
+    department = str(raw_job.get("department") or "")
+    employment_type = str(raw_job.get("employmentType") or "")
+    workplace_type = str(raw_job.get("workplaceType") or ("Remote" if is_remote else "On-site"))
+
+    job_url = str(raw_job.get("jobUrl") or "").strip()
+    apply_url = str(raw_job.get("applyUrl") or job_url).strip()
+    published_date = raw_job.get("publishedAt")
+
+    # Inferred attributes (clearly labeled to preserve integrity)
+    inferred_skills = extract_skills(f"{title} {plain_description}")
+    inferred_exp = infer_experience_level(title, plain_description)
 
     return {
-        "job_id": f"gh_{company}_{raw_job.get('id')}",
+        "source": "ashby",
+        "job_id": f"ashby_{company}_{raw_job.get('id')}",
         "title": title,
         "company": company.title(),
-        "location": location_name or "Not Specified",
-        "work_mode": work_mode,
-        "experience": experience_hint,
-        "salary": None,  # Greenhouse public API rarely publishes structured salary
-        "posted_date": posted_date,
+        "location": primary_location or "Remote",
+        "secondary_locations": secondary_locations,
+        "work_mode": workplace_type,
+        "is_remote": is_remote,
+        "employment_type": employment_type,
+        "department": department,
+        "raw_experience_text": None,  # Ashby API does not provide a separate raw experience field
+        "inferred_experience_level": inferred_exp,
+        "salary": raw_job.get("compensation"),  # Structured compensation if provided
+        "posted_date": published_date,
         "description": plain_description,
-        "required_skills": extracted_skills,
-        "preferred_skills": [],
+        "inferred_skills": inferred_skills,
         "job_url": job_url,
-        "official_application_url": job_url,
-        "departments": department_names,
-        "source": "greenhouse",
+        "official_application_url": apply_url,
     }
 
 
-async def collect_greenhouse_jobs(
+async def collect_ashby_jobs(
     companies: list[str] | None = None,
     output_file: Path | None = None,
     request_delay_seconds: float = 0.5,
 ) -> list[dict[str, Any]]:
-    """Collect, filter, normalize, and deduplicate jobs across Greenhouse company boards.
+    """Collect, filter, normalize, and deduplicate jobs across Ashby company boards.
 
     Args:
-        companies: List of company board tokens. Defaults to DEFAULT_COMPANIES.
+        companies: List of company board slugs. Defaults to DEFAULT_ASHBY_COMPANIES.
         output_file: Path where JSON output should be saved.
         request_delay_seconds: Polite delay between company API requests.
 
     Returns:
         List of normalized job dictionary records.
     """
-    target_companies = companies or DEFAULT_COMPANIES
+    target_companies = companies or DEFAULT_ASHBY_COMPANIES
     collected_jobs: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
@@ -367,12 +396,11 @@ async def collect_greenhouse_jobs(
                         seen_urls.add(job_url)
                         collected_jobs.append(normalized)
 
-            # Respectful rate limiting between requests
             if index < len(target_companies) - 1:
                 await asyncio.sleep(request_delay_seconds)
 
     logger.info(
-        "Total relevant jobs collected across %d companies: %d",
+        "Total relevant jobs collected across %d Ashby companies: %d",
         len(target_companies),
         len(collected_jobs),
     )
@@ -387,12 +415,10 @@ async def collect_greenhouse_jobs(
 
 
 async def main() -> None:
-    """Entrypoint for running the Greenhouse collector directly."""
-    output_path = (
-        Path(__file__).resolve().parent.parent.parent.parent / "data" / "greenhouse_jobs.json"
-    )
-    print(f"Starting Greenhouse job collection across {len(DEFAULT_COMPANIES)} tech companies...")
-    jobs = await collect_greenhouse_jobs(output_file=output_path)
+    """Entrypoint for running the Ashby collector directly."""
+    output_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "ashby_jobs.json"
+    print(f"Starting Ashby job collection across {len(DEFAULT_ASHBY_COMPANIES)} tech companies...")
+    jobs = await collect_ashby_jobs(output_file=output_path)
     print(f"\nCollection complete! Found {len(jobs)} target jobs.")
     print(f"Results saved to: {output_path}")
 
