@@ -5,7 +5,9 @@ from personal_job_hunter.db.models import (
     Base,
     CandidateProfileModel,
     CanonicalJobModel,
+    JobEmbeddingModel,
     JobMatchScoreModel,
+    ProfileEmbeddingModel,
     SourceProvenanceModel,
 )
 from personal_job_hunter.db.repository import JobRepository, ProfileRepository
@@ -16,8 +18,10 @@ __all__ = [
     "Base",
     "CandidateProfileModel",
     "CanonicalJobModel",
+    "JobEmbeddingModel",
     "JobMatchScoreModel",
     "JobRepository",
+    "ProfileEmbeddingModel",
     "ProfileRepository",
     "SourceProvenanceModel",
     "create_tables",

@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session, joinedload
 from personal_job_hunter.db.models import (
     CandidateProfileModel,
     CanonicalJobModel,
+    JobEmbeddingModel,
     JobMatchScoreModel,
+    ProfileEmbeddingModel,
     SourceProvenanceModel,
 )
 from personal_job_hunter.domain.models import (
@@ -24,7 +26,7 @@ def _utc_now() -> datetime:
 
 
 class ProfileRepository:
-    """Data access operations for candidate profiles."""
+    """Data access operations for candidate profiles and profile embeddings."""
 
     @staticmethod
     def save_profile(
@@ -73,9 +75,53 @@ class ProfileRepository:
         """Fetch candidate profile by ID."""
         return session.get(CandidateProfileModel, profile_id)
 
+    @staticmethod
+    def get_profile_embedding(
+        session: Session, profile_id: str, model_name: str, model_version: str
+    ) -> ProfileEmbeddingModel | None:
+        """Fetch profile embedding by profile ID and model version."""
+        stmt = select(ProfileEmbeddingModel).where(
+            ProfileEmbeddingModel.profile_id == profile_id,
+            ProfileEmbeddingModel.model_name == model_name,
+            ProfileEmbeddingModel.model_version == model_version,
+        )
+        return session.scalars(stmt).first()
+
+    @staticmethod
+    def upsert_profile_embedding(
+        session: Session,
+        profile_id: str,
+        model_name: str,
+        model_version: str,
+        content_hash: str,
+        embedding: list[float],
+    ) -> ProfileEmbeddingModel:
+        """Idempotently insert or update candidate profile embedding."""
+        existing = ProfileRepository.get_profile_embedding(
+            session, profile_id, model_name, model_version
+        )
+        if existing:
+            if existing.content_hash != content_hash:
+                existing.content_hash = content_hash
+                existing.embedding = embedding
+                existing.updated_at = _utc_now()
+            return existing
+
+        new_emb = ProfileEmbeddingModel(
+            profile_id=profile_id,
+            model_name=model_name,
+            model_version=model_version,
+            content_hash=content_hash,
+            embedding=embedding,
+            created_at=_utc_now(),
+            updated_at=_utc_now(),
+        )
+        session.add(new_emb)
+        return new_emb
+
 
 class JobRepository:
-    """Data access operations for canonical jobs, source provenance, and match scores."""
+    """Data access operations for canonical jobs, provenance, match scores, and vectors."""
 
     @staticmethod
     def upsert_canonical_job(session: Session, job: CanonicalJobPost) -> CanonicalJobModel:
@@ -150,7 +196,6 @@ class JobRepository:
             src_val = rec.source.value if hasattr(rec.source, "value") else str(rec.source)
             key = (src_val, rec.source_job_id)
             if key in existing_prov:
-                # Update existing provenance entry
                 existing = existing_prov[key]
                 existing.job_url = rec.job_url
                 existing.official_application_url = rec.official_application_url
@@ -178,6 +223,48 @@ class JobRepository:
         return len(jobs)
 
     @staticmethod
+    def get_job_embedding(
+        session: Session, canonical_id: str, model_name: str, model_version: str
+    ) -> JobEmbeddingModel | None:
+        """Fetch job embedding by canonical ID and model version."""
+        stmt = select(JobEmbeddingModel).where(
+            JobEmbeddingModel.canonical_id == canonical_id,
+            JobEmbeddingModel.model_name == model_name,
+            JobEmbeddingModel.model_version == model_version,
+        )
+        return session.scalars(stmt).first()
+
+    @staticmethod
+    def upsert_job_embedding(
+        session: Session,
+        canonical_id: str,
+        model_name: str,
+        model_version: str,
+        content_hash: str,
+        embedding: list[float],
+    ) -> JobEmbeddingModel:
+        """Idempotently insert or update job vector embedding."""
+        existing = JobRepository.get_job_embedding(session, canonical_id, model_name, model_version)
+        if existing:
+            if existing.content_hash != content_hash:
+                existing.content_hash = content_hash
+                existing.embedding = embedding
+                existing.updated_at = _utc_now()
+            return existing
+
+        new_emb = JobEmbeddingModel(
+            canonical_id=canonical_id,
+            model_name=model_name,
+            model_version=model_version,
+            content_hash=content_hash,
+            embedding=embedding,
+            created_at=_utc_now(),
+            updated_at=_utc_now(),
+        )
+        session.add(new_emb)
+        return new_emb
+
+    @staticmethod
     def save_match_score(
         session: Session, match_result: JobMatchResult, profile_id: str = "default"
     ) -> JobMatchScoreModel:
@@ -201,6 +288,9 @@ class JobRepository:
             existing.technical_score = bd.technical_score
             existing.experience_score = bd.experience_score
             existing.location_score = bd.location_score
+            existing.deterministic_score = bd.deterministic_score
+            existing.semantic_score = bd.semantic_score
+            existing.semantic_similarity = bd.semantic_similarity
             existing.matched_skills = list(bd.matched_skills)
             existing.missing_skills = list(bd.missing_skills)
             existing.matched_role_keywords = list(bd.matched_role_keywords)
@@ -219,6 +309,9 @@ class JobRepository:
             technical_score=bd.technical_score,
             experience_score=bd.experience_score,
             location_score=bd.location_score,
+            deterministic_score=bd.deterministic_score,
+            semantic_score=bd.semantic_score,
+            semantic_similarity=bd.semantic_similarity,
             matched_skills=list(bd.matched_skills),
             missing_skills=list(bd.missing_skills),
             matched_role_keywords=list(bd.matched_role_keywords),
@@ -248,6 +341,7 @@ class JobRepository:
             .options(
                 joinedload(CanonicalJobModel.source_records),
                 joinedload(CanonicalJobModel.match_scores),
+                joinedload(CanonicalJobModel.embeddings),
             )
             .where(CanonicalJobModel.canonical_id == canonical_id)
         )

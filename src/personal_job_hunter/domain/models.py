@@ -307,6 +307,10 @@ class MatchWeights(BaseModel):
     experience_weight: float = 0.20
     location_weight: float = 0.15
 
+    # Hybrid weights for combining deterministic and semantic scores
+    deterministic_weight: float = 0.70
+    semantic_weight: float = 0.30
+
     apply_threshold: float = 80.0
     stretch_threshold: float = 55.0
 
@@ -319,6 +323,12 @@ class MatchBreakdown(BaseModel):
     experience_score: float = 0.0
     location_score: float = 0.0
     overall_score: float = 0.0
+
+    # Semantic additions (Phase 7)
+    deterministic_score: float | None = None
+    semantic_score: float | None = None
+    semantic_similarity: float | None = None
+    final_score: float | None = None
 
     matched_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)

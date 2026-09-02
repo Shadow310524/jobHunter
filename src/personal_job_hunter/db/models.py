@@ -1,8 +1,9 @@
-"""SQLAlchemy 2.0 ORM database models for PostgreSQL persistence."""
+"""SQLAlchemy 2.0 ORM database models for PostgreSQL & pgvector persistence."""
 
 from datetime import UTC, datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -58,6 +59,9 @@ class CandidateProfileModel(Base):
     match_scores: Mapped[list["JobMatchScoreModel"]] = relationship(
         "JobMatchScoreModel", back_populates="profile", cascade="all, delete-orphan"
     )
+    embeddings: Mapped[list["ProfileEmbeddingModel"]] = relationship(
+        "ProfileEmbeddingModel", back_populates="profile", cascade="all, delete-orphan"
+    )
 
 
 class CanonicalJobModel(Base):
@@ -105,6 +109,9 @@ class CanonicalJobModel(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    embeddings: Mapped[list["JobEmbeddingModel"]] = relationship(
+        "JobEmbeddingModel", back_populates="canonical_job", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_canonical_jobs_company_title", "company", "title"),
@@ -147,7 +154,7 @@ class SourceProvenanceModel(Base):
 
 
 class JobMatchScoreModel(Base):
-    """Persisted deterministic match evaluation for a canonical job."""
+    """Persisted deterministic + semantic match evaluation for a canonical job."""
 
     __tablename__ = "job_match_scores"
 
@@ -172,6 +179,11 @@ class JobMatchScoreModel(Base):
     experience_score: Mapped[float] = mapped_column(Float, nullable=False)
     location_score: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # Hybrid Semantic Additions
+    deterministic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    semantic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    semantic_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     matched_skills: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     missing_skills: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     matched_role_keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -192,6 +204,83 @@ class JobMatchScoreModel(Base):
     __table_args__ = (
         UniqueConstraint("canonical_id", "profile_id", name="uq_canonical_job_match_profile"),
         Index("ix_job_match_scores_recommendation_score", "recommendation", "overall_score"),
+    )
+
+
+class JobEmbeddingModel(Base):
+    """Persisted vector embeddings for canonical jobs with model versioning & content hash."""
+
+    __tablename__ = "job_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canonical_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("canonical_jobs.canonical_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    canonical_job: Mapped[CanonicalJobModel] = relationship(
+        "CanonicalJobModel", back_populates="embeddings"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "canonical_id",
+            "model_name",
+            "model_version",
+            name="uq_job_embeddings_canonical_model_version",
+        ),
+        Index("ix_job_embeddings_lookup", "canonical_id", "model_name", "model_version"),
+    )
+
+
+class ProfileEmbeddingModel(Base):
+    """Persisted vector embeddings for candidate profiles with model versioning & content hash."""
+
+    __tablename__ = "profile_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("candidate_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    profile: Mapped[CandidateProfileModel] = relationship(
+        "CandidateProfileModel", back_populates="embeddings"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "model_name",
+            "model_version",
+            name="uq_profile_embeddings_model_version",
+        ),
     )
 
 
