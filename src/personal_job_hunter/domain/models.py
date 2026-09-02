@@ -113,3 +113,74 @@ class UnifiedJobPost(BaseModel):
         if "onsite" in lower or "on-site" in lower or "office" in lower or "inoffice" in lower:
             return WorkMode.ONSITE
         return WorkMode.UNKNOWN
+
+
+class SourceProvenance(BaseModel):
+    """Provenance record tracking which source provided what data."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    source: JobSource
+    source_job_id: str
+    job_url: str
+    official_application_url: str
+    posted_date: str | None = None
+    raw_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CanonicalJobPost(BaseModel):
+    """Canonical unified job posting with full source provenance and duplicate tracking."""
+
+    model_config = ConfigDict(
+        use_enum_values=True,
+        populate_by_name=True,
+        extra="ignore",
+    )
+
+    canonical_id: str = Field(..., description="Deterministic canonical identifier")
+    title: str = Field(..., description="Primary canonical job title")
+    company: str = Field(..., description="Normalized company name")
+    location: str = Field(..., description="Primary location")
+    secondary_locations: list[str] = Field(default_factory=list)
+    work_mode: WorkMode = Field(default=WorkMode.UNKNOWN)
+    is_remote: bool = Field(default=False)
+    employment_type: str | None = None
+    department: str | None = None
+    posted_date: str | None = None
+    description: str = Field(..., description="Primary comprehensive job description")
+    salary: dict[str, Any] | str | None = None
+    raw_experience_text: str | None = None
+    inferred_experience_level: str | None = None
+    inferred_skills: list[str] = Field(default_factory=list)
+
+    # --- Provenance Information ---
+    sources: list[JobSource] = Field(
+        default_factory=list, description="All sources contributing to this canonical job"
+    )
+    source_records: list[SourceProvenance] = Field(
+        default_factory=list, description="Detailed records from each contributing source"
+    )
+    application_urls: list[str] = Field(
+        default_factory=list, description="All unique application URLs found for this job"
+    )
+
+    # --- Candidate Match Flag ---
+    duplicate_candidate_group: str | None = Field(
+        default=None,
+        description="Candidate group key if matching company/title/location with other jobs",
+    )
+
+
+class DeduplicationResult(BaseModel):
+    """Summary and payload of a deterministic deduplication execution."""
+
+    total_input_records: int
+    unique_canonical_jobs: int
+    confirmed_duplicates_merged: int
+    potential_duplicate_groups_count: int
+    potential_duplicate_jobs_count: int
+    canonical_jobs: list[CanonicalJobPost]
+    potential_duplicate_groups: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Map of candidate group key to list of canonical_ids",
+    )
